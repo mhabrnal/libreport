@@ -5,7 +5,7 @@
 Summary: Generic library for reporting various problems
 Name: libreport
 Version: @@LIBREPORT_VERSION@@
-Release: 1%{?dist}
+Release: 1.2.jfilak%{?dist}
 License: GPLv2+
 Group: System Environment/Libraries
 URL: https://fedorahosted.org/abrt/
@@ -27,7 +27,7 @@ BuildRequires: asciidoc
 BuildRequires: xmlto
 BuildRequires: newt-devel
 BuildRequires: libproxy-devel
-BuildRequires: satyr-devel >= 0.11
+BuildRequires: satyr-devel >= 0.13-1.1.jfilak
 BuildRequires: augeas-devel
 BuildRequires: augeas
 Requires: libreport-filesystem = %{version}-%{release}
@@ -385,5 +385,11 @@ gtk-update-icon-cache %{_datadir}/icons/hicolor &>/dev/null || :
 %{_mandir}/man5/ureport.conf.5.gz
 
 %changelog
+* Thu May 15 2014 Jakub Filak <jfilak@redhat.com> @@LIBREPORT_VERSION@@-1.2.jfilak
+- uReport SSL certificates
+
+* Wed May 14 2014 Jakub Filak <jfilak@redhat.com> @@LIBREPORT_VERSION@@-1.1.jfilak
+- Upstream uReport
+
 * Wed Jun 01 2011 Jiri Moskovcak <jmoskovc@redhat.com> 2.0.2-1
 - initial packaging
