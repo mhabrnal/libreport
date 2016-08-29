@@ -1,0 +1,91 @@
+reporter-systemd-journal(1)
+==========================
+
+NAME
+----
+reporter-systemd-journal - Prints problem information to systemd journal message catalog.
+
+SYNOPSIS
+--------
+'reporter-systemd-journal' [-v] [-d DIR] [-m MESSAGEID] [-F FMTFILE] [-n]
+
+DESCRIPTION
+-----------
+The tool reads problem directory DIR and sends catalog message with its
+details into systemd journal.
+
+Catalog message is chosen by message id (parameter --message-id). If no
+message id is specified, the default one is used instead.
+
+Message's content is extended by information defined in
+formatting file. Summary part is used as main log message. Other parts from
+format file are saved in PROBLEM_REPORT variable. Example:
+
+------------
+Catalog message:
+-- 13a16aacbc85495c96e3627cc64f5263
+Subject: testing reporter-systemd-journal message
+Defined-By: libreport
+
+Testing reporter-systemd-journal catalog message
+@PROBLEM_REPORT@
+This usually indicates a programming error in the crashing program.
+
+Formating file:
+%summary:: Formating reporter-systemd-journal message
+::%bare_%short_backtrace
+
+# reporter-systemd-journal --message-id 13a16aacbc85495c96e3627cc64f5263 -F $FORMATING_FILE
+
+Journal entry:
+Sep 27 16:50:49 dhcp-24-126.brq.redhat.com reporter-systemd-journal[31675]: Formating reporter-systemd-journal message
+-- Subject: testing reporter-systemd-journal message
+-- Defined-By: libreport
+--
+-- Testing reporter-systemd-journal catalog message
+--
+-- #1 crash in /usr/bin/will_segfault
+-- #2 varargs in /usr/bin/will_segfault
+-- #3 f in /usr/bin/will_segfault
+-- #4 callback in /usr/bin/will_segfault
+-- #5 call_me_back in /usr/lib64/libwillcrash.so.0.0.0
+--
+-- This usually indicates a programming error in the crashing program.
+
+------------
+
+Integration with ABRT events
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'reporter-systemd-journal' can be used as a reporter, to allow users
+to report problems to systemd journal message catalog. Example:
+
+------------
+EVENT=report  reporter-systemd-journal --message-id 1909f1302a5240c895d7c05566100dce
+------------
+
+OPTIONS
+-------
+-d DIR::
+   Path to problem directory.
+
+-v::
+   Be more verbose. Can be given multiple times.
+
+-m MESSAGEID::
+--message-id MESSAGEID::
+   Catalog message id.
+
+-F CONF_FORMAT_FILE::
+   Formatting file for systemd journal catalog message.
+
+-n::
+   Do not attach problem report description part into systemd catalog message.
+
+
+SEE ALSO
+--------
+journalctl(1)
+
+AUTHORS
+-------
+* ABRT team
