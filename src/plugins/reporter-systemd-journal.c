@@ -20,8 +20,6 @@
 #include <systemd/sd-journal.h>
 #include "problem_report.h"
 
-#define DEFAULT_MESSAGE_ID "1909f1302a5240c895d7c05566100dce"
-
 #define PROBLEM_REPORT_DEFAULT_TEMPLATE \
     "%summary:: %reason%\n"
 
@@ -30,19 +28,15 @@ typedef struct msg_content
     unsigned allocated;
     unsigned used;
     struct iovec *data;
-
 } msg_content_t;
 
 static msg_content_t *msg_content_new()
 {
-    const int init_count = 2;
-
     msg_content_t *msg_c = xmalloc(sizeof(*msg_c));
 
-    msg_c->data = xmalloc(init_count * sizeof(*(msg_c->data)));
-
-    msg_c->allocated = init_count;
+    msg_c->allocated = 0;
     msg_c->used = 0;
+    msg_c->data = NULL;
 
     return msg_c;
 }
@@ -63,15 +57,6 @@ static unsigned msg_content_get_size(msg_content_t *msg_c)
     return msg_c->used;
 }
 
-#define IOVEC_ADD_FIELD(i, key, value, prefix)                 \
-    do {                                                       \
-        struct iovec *_i = &(i);                               \
-        char *_s = xasprintf("%s%s=%s", prefix, key, value);   \
-        for (char *c = _s; *c != '='; ++c) *c = toupper(*c);   \
-        _i->iov_base = _s;                                     \
-        _i->iov_len = strlen(_s);                              \
-    } while(false)
-
 static void msg_content_add_ext(msg_content_t *msg_c, const char *key, const char *value, const char *prefix)
 {
     if (!msg_c)
@@ -84,15 +69,17 @@ static void msg_content_add_ext(msg_content_t *msg_c, const char *key, const cha
         msg_c->data = xrealloc(msg_c->data, msg_c->allocated * sizeof(*(msg_c->data)));
     }
 
-    struct iovec *iov = msg_c->data;
-    IOVEC_ADD_FIELD(iov[msg_c->used++], key, value, prefix);
+    char *s = xasprintf("%s%s=%s", prefix, key, value);
+    for (char *c = s; *c != '='; ++c) *c = toupper(*c);
+    msg_c->data[msg_c->used].iov_base = s;
+    msg_c->data[msg_c->used].iov_len = strlen(s);
 
     return;
 }
 
 static void msg_content_add(msg_content_t *msg_c, const char *key, const char *value)
 {
-    msg_content_add_ext(msg_c, key, value, /* without prefix */"");
+    msg_content_add_ext(msg_c, key, value, /* no prefix */"");
 }
 
 static void msg_content_free(msg_content_t *msg_c)
@@ -100,9 +87,8 @@ static void msg_content_free(msg_content_t *msg_c)
     if (!msg_c)
         return;
 
-    struct iovec iov = msg_c->data[0];
-    for (int i = 0; i < msg_c->used; iov = msg_c->data[++i])
-        free(iov.iov_base);
+    for (unsigned i = 0; i < msg_c->used; ++i)
+        free(msg_c->data[i].iov_base);
 
     free(msg_c->data);
     free(msg_c);
@@ -110,6 +96,12 @@ static void msg_content_free(msg_content_t *msg_c)
     return;
 }
 
+#define FIELD_PREFIX "PROBLEM_"
+#define MESSAGE_PRIORITY "2"
+
+#define BINARY_NAME "binary"
+#define SYSLOG_ID   "SYSLOG_IDENTIFIER"
+#define MESSAGE_ID  "MESSAGE_ID"
 
 enum {
     DUMP_NONE      = 1 << 0,
@@ -118,10 +110,17 @@ enum {
 };
 
 /* Elements needed by systemd journal messages */
+static const char *const fields_default_no_prefix[] = {
+    SYSLOG_ID             ,
+    MESSAGE_ID            ,
+    NULL
+};
+
 static const char *const fields_default[] = {
-    FILENAME_EXECUTABLE     ,
+    BINARY_NAME             ,
     FILENAME_PID            ,
     FILENAME_EXCEPTION_TYPE ,
+    SYSLOG_ID               ,
     NULL
 };
 
@@ -140,29 +139,36 @@ static const char *const fields_essential[] = {
     NULL
 };
 
-static void msg_content_add_fields(msg_content_t *msg_c, problem_data_t *problem_data,
-                                   const char *const *fields)
+
+static void msg_content_add_fields_ext(msg_content_t *msg_c, problem_data_t *problem_data,
+                                   const char *const *fields, const char *prefix)
 {
     for (int i = 0; fields[i] != NULL; ++i)
     {
         const char *value = problem_data_get_content_or_NULL(problem_data, fields[i]);
         if (value)
-            msg_content_add_ext(msg_c, fields[i], value, "PROBLEM_");
+            msg_content_add_ext(msg_c, fields[i], value, prefix);
     }
 
     return;
 }
 
+static void msg_content_add_fields(msg_content_t *msg_c, problem_data_t *problem_data,
+                                   const char *const *fields)
+{
+    msg_content_add_fields_ext(msg_c, problem_data, fields, /* no prefix */ "");
+
+    return;
+}
+
 static msg_content_t *
-create_journal_message(problem_data_t *problem_data, problem_report_t *pr,
-                       const char *msg_id, unsigned dump_opts)
+create_journal_message(problem_data_t *problem_data, problem_report_t *pr, unsigned dump_opts)
 {
     msg_content_t *msg_c = msg_content_new();
 
     /* mandatory fields */
     msg_content_add(msg_c, "MESSAGE", problem_report_get_summary(pr));
-    msg_content_add(msg_c, "MESSAGE_ID", msg_id ? msg_id : DEFAULT_MESSAGE_ID);
-    msg_content_add(msg_c, "PRIORITY", "2");
+    msg_content_add(msg_c, "PRIORITY", MESSAGE_PRIORITY);
 
     /* add problem report description into PROBLEM_REPORT field */
     char *description = NULL;
@@ -174,11 +180,12 @@ create_journal_message(problem_data_t *problem_data, problem_report_t *pr,
 
     if (!(dump_opts & DUMP_FULL))
     {
-        msg_content_add_fields(msg_c, problem_data, fields_default);
+        msg_content_add_fields(msg_c, problem_data, fields_default_no_prefix);
+        msg_content_add_fields_ext(msg_c, problem_data, fields_default, FIELD_PREFIX);
 
         /* add defined default fields */
         if (dump_opts & DUMP_ESSENTIAL)
-            msg_content_add_fields(msg_c, problem_data, fields_essential);
+            msg_content_add_fields_ext(msg_c, problem_data, fields_essential, FIELD_PREFIX);
     }
     /* add all fields from problem directory */
     else
@@ -188,7 +195,7 @@ create_journal_message(problem_data_t *problem_data, problem_report_t *pr,
             const problem_item *item = problem_data_get_item_or_NULL(problem_data, elem->data);
             /* add only text elements */
             if (item && (item->flags & CD_FLAG_TXT))
-                msg_content_add_ext(msg_c, elem->data, item->content, "PROBLEM_");
+                msg_content_add_ext(msg_c, elem->data, item->content, FIELD_PREFIX);
         }
     }
 
@@ -219,20 +226,23 @@ int main(int argc, char **argv)
         OPT_m = 1 << 2,
         OPT_F = 1 << 3,
         OPT_p = 1 << 4,
-        OPT_D = 1 << 5,
+        OPT_s = 1 << 5,
+        OPT_D = 1 << 6,
     };
     const char *dump_dir_name = ".";
-    const char *message_id = DEFAULT_MESSAGE_ID;
+    const char *message_id = NULL;
     const char *fmt_file = NULL;
     const char *dump = NULL;
+    const char *syslog_id = NULL;
     /* Keep enum above and order of options below in sync! */
     struct options program_options[] = {
         OPT__VERBOSE(&g_verbose),
-        OPT_STRING('d', NULL,         &dump_dir_name, "DIR"   , _("Problem directory")),
-        OPT_STRING('m', "message-id", &message_id,    "STR"   , _("Catalog message id")),
-        OPT_STRING('F', NULL        , &fmt_file     , "FILE"  , _("Formatting file for catalog message")),
-        OPT_STRING('p', "dump"      , &dump         , "STR"   , _("Dump problem dir into systemd journal fields")),
-        OPT_BOOL(  'D', NULL        , NULL                    , _("Debug")),
+        OPT_STRING('d', NULL          , &dump_dir_name, "DIR"   , _("Problem directory")),
+        OPT_STRING('m', "message-id"  , &message_id,    "STR"   , _("Catalog message id")),
+        OPT_STRING('F', NULL          , &fmt_file     , "FILE"  , _("Formatting file for catalog message")),
+        OPT_STRING('p', "dump"        , &dump         , "STR"   , _("Dump problem dir into systemd journal fields")),
+        OPT_STRING('s', "syslog-id"   , &syslog_id    , "STR"   , _("Define SYSLOG_IDENTIFIER systemd journal field")),
+        OPT_BOOL(  'D', NULL          , NULL                    , _("Debug")),
         OPT_END()
     };
     unsigned opts = parse_opts(argc, argv, program_options, program_usage_string);
@@ -285,12 +295,20 @@ int main(int argc, char **argv)
         binary_name = strrchr(exe, '/') + 1;
 
     if (binary_name)
-        problem_data_add_text_noteditable(problem_data, FILENAME_EXECUTABLE, binary_name);
+        problem_data_add_text_noteditable(problem_data, BINARY_NAME, binary_name);
 
     /* crash_function element is neeeded by systemd journal messages, save ??, if it doesn't exist */
     const char *crash_function = problem_data_get_content_or_NULL(problem_data, FILENAME_CRASH_FUNCTION);
     if (!crash_function)
         problem_data_add_text_noteditable(problem_data, "crash_function", "??");
+
+    /* Add SYSLOG_IDENTIFIER into problem data */
+    if (syslog_id)
+        problem_data_add_text_noteditable(problem_data, SYSLOG_ID, syslog_id);
+
+    /* Add MESSAGE_ID into problem data */
+    if (syslog_id)
+        problem_data_add_text_noteditable(problem_data, MESSAGE_ID, message_id);
 
     /* Generating of problem report */
     problem_report_t *pr = NULL;
@@ -314,7 +332,7 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    msg_content_t *msg_c = create_journal_message(problem_data, pr, message_id, dump_opt);
+    msg_content_t *msg_c = create_journal_message(problem_data, pr, dump_opt);
 
     /* post journal message */
     sd_journal_sendv(msg_content_get_data(msg_c), msg_content_get_size(msg_c));
