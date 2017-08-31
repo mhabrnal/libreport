@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<workflow>
+    <_name>Provide Red Hat Support with crash details</_name>
+    <_description>Attach crash data to an existing support case</_description>
+    <priority>99</priority>
+
+    <events>
+        <event>report_RHTSupport_AddData</event>
+    </events>
+</workflow>
