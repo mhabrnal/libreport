@@ -43,7 +43,8 @@ extern "C" {
 
 /* Utility function */
 int create_symlink_lockfile(const char *filename, const char *pid_str);
-int create_symlink_lockfile_at(int dir_fd, const char *filename, const char *pid_str);
+int create_symlink_lockfile_at(int dir_fd, const char *filename,
+                               const char *pid_str, bool log_all_warnings);
 
 /* Opens filename for reading relatively to a directory represented by dir_fd.
  * The function fails if the file is symbolic link, directory or hard link.

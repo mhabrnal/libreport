@@ -326,7 +326,8 @@ static time_t parse_time_file_at(int dir_fd, const char *filename)
  *  0: failed to lock (someone else has it locked)
  *  1: success
  */
-int create_symlink_lockfile_at(int dir_fd, const char* lock_file, const char* pid)
+int create_symlink_lockfile_at(int dir_fd, const char* lock_file,
+                               const char* pid, bool log_all_warnings)
 {
     while (symlinkat(pid, dir_fd, lock_file) != 0)
     {
@@ -368,7 +369,8 @@ int create_symlink_lockfile_at(int dir_fd, const char* lock_file, const char* pi
             snprintf(pid_str, sizeof(pid_str), "/proc/%s", pid_buf);
             if (access(pid_str, F_OK) == 0)
             {
-                log_warning("Lock file '%s' is locked by process %s", lock_file, pid_buf);
+                if (log_all_warnings)
+                    log_warning("Lock file '%s' is locked by process %s. Waiting...", lock_file, pid_buf);
                 return 0;
             }
             log_warning("Lock file '%s' was locked by process %s, but it crashed?", lock_file, pid_buf);
@@ -388,7 +390,7 @@ int create_symlink_lockfile_at(int dir_fd, const char* lock_file, const char* pi
 
 int create_symlink_lockfile(const char *filename, const char *pid_str)
 {
-    return create_symlink_lockfile_at(AT_FDCWD, filename, pid_str);
+    return create_symlink_lockfile_at(AT_FDCWD, filename, pid_str, true);
 }
 
 static const char *dd_check(struct dump_dir *dd)
@@ -429,10 +431,16 @@ static int dd_lock(struct dump_dir *dd, unsigned sleep_usec, int flags)
 
     unsigned count = NO_TIME_FILE_COUNT;
 
- retry:
+ retry: ;
+    /* If the file is locked by another process, warning "Lock file '.lock' is
+     * locked by process $PID" is logged every $sleep_usec usec and fill up log
+     * file.
+     * rhbz#1588272
+     */
+    bool log_all_warnings = true;
     while (1)
     {
-        int r = create_symlink_lockfile_at(dd->dd_fd, ".lock", pid_buf);
+        int r = create_symlink_lockfile_at(dd->dd_fd, ".lock", pid_buf, log_all_warnings);
         if (r < 0)
             return r; /* error */
         if (r > 0 || errno == EALREADY)
@@ -444,6 +452,7 @@ static int dd_lock(struct dump_dir *dd, unsigned sleep_usec, int flags)
         }
         /* Other process has the lock, wait for it to go away */
         usleep(sleep_usec);
+        log_all_warnings = false;
     }
 
     /* Reset errno to 0 only if errno is EALREADY (used by
